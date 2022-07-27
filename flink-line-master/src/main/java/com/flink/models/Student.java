@@ -24,4 +24,6 @@ public class Student implements Serializable {
     private int age;
 
     private String createDate;
+
+    private String creatState;
 }

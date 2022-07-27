@@ -10,6 +10,7 @@ import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.List;
 
 /*
@@ -22,6 +23,8 @@ public class Flink2JdbcWriter extends RichSinkFunction<List<Student>> {
 
     private transient Connection connection = null;
     private transient PreparedStatement ps = null;
+    private transient PreparedStatement up =null;
+    private transient PreparedStatement se =null;
     private volatile boolean isRunning = true;
 
     @Override
@@ -32,9 +35,13 @@ public class Flink2JdbcWriter extends RichSinkFunction<List<Student>> {
         connection = ConnectionPoolUtils.getConnection();
 
         if (null != connection){
-            ps = connection.prepareStatement("insert into stydent(name,age,createDate) values (?,?,?);");
+            ps = connection.prepareStatement("insert into student (id, name, age, createDate,create_state) values (?,?,?,?,?);");
+            up = connection.prepareStatement("update student SET name=?,age=?,createDate=?,create_state=? where id=?;");
+            se = connection.prepareStatement("select create_state from student where id=?;");
         }
     }
+
+
 
 
     @Override
@@ -42,13 +49,37 @@ public class Flink2JdbcWriter extends RichSinkFunction<List<Student>> {
 
         if (isRunning && null != ps){
             for (Student one : list){
-                ps.setString(1,one.getName());
-                ps.setInt(2,one.getAge());
-                ps.setString(3,one.getCreateDate());
-                ps.addBatch();
+
+                se.setInt(1,one.getId());
+                ResultSet resultSet = se.executeQuery();
+                if(!resultSet.next()) {
+                    ps.setInt(1,one.getId());
+                    ps.setString(2, one.getName());
+                    ps.setInt(3, one.getAge());
+                    ps.setString(4, one.getCreateDate());
+                    ps.setString(5, one.getCreatState());
+                    ps.addBatch();
+
+                }else {
+                    String createState = resultSet.getString("create_state");
+                    if (createState != "1") {
+                        up.setString(1, one.getName());
+                        up.setInt(2, one.getAge());
+                        up.setString(3, one.getCreateDate());
+                        up.setString(4, one.getCreatState());
+                        up.setInt(5, one.getId());
+                        up.addBatch();
+                    }
+                    if (createState == "1") {
+                        break;
+
+                    }
+                }
             }
             int [] count = ps.executeBatch();
             log.info("成功写入mysql数量："+ count.length);
+            int [] count2 = up.executeBatch();
+            log.info("成功修改的数据量："+count2.length);
         }
     }
 
@@ -63,10 +94,15 @@ public class Flink2JdbcWriter extends RichSinkFunction<List<Student>> {
             if (ps != null) {
                 ps.close();
             }
+            if (up != null){
+                up.close();
+            }
+            if (se != null){
+                se.close();
+            }
         }catch (Exception e){
             e.printStackTrace();
         }
         isRunning = false;
     }
-
 }
